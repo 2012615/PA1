@@ -1,102 +1,115 @@
-/***************************************************************************************
-* Copyright (c) 2014-2022 Zihao Yu, Nanjing University
-*
-* NEMU is licensed under Mulan PSL v2.
-* You can use this software according to the terms and conditions of the Mulan PSL v2.
-* You may obtain a copy of Mulan PSL v2 at:
-*          http://license.coscl.org.cn/MulanPSL2
-*
-* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-*
-* See the Mulan PSL v2 for more details.
-***************************************************************************************/
-
 #ifndef __CPU_DECODE_H__
 #define __CPU_DECODE_H__
 
-#include <isa.h>
+#include "common.h"
 
-typedef struct Decode {
-  vaddr_t pc;
-  vaddr_t snpc; // static next pc
-  vaddr_t dnpc; // dynamic next pc
-  ISADecodeInfo isa;
-  IFDEF(CONFIG_ITRACE, char logbuf[128]);
-} Decode;
+#include "rtl.h"
 
-// --- pattern matching mechanism ---
-__attribute__((always_inline))
-static inline void pattern_decode(const char *str, int len,
-    uint64_t *key, uint64_t *mask, uint64_t *shift) {
-  uint64_t __key = 0, __mask = 0, __shift = 0;
-#define macro(i) \
-  if ((i) >= len) goto finish; \
-  else { \
-    char c = str[i]; \
-    if (c != ' ') { \
-      Assert(c == '0' || c == '1' || c == '?', \
-          "invalid character '%c' in pattern string", c); \
-      __key  = (__key  << 1) | (c == '1' ? 1 : 0); \
-      __mask = (__mask << 1) | (c == '?' ? 0 : 1); \
-      __shift = (c == '?' ? __shift + 1 : 0); \
-    } \
-  }
+enum { OP_TYPE_REG, OP_TYPE_MEM, OP_TYPE_IMM };
 
-#define macro2(i)  macro(i);   macro((i) + 1)
-#define macro4(i)  macro2(i);  macro2((i) + 2)
-#define macro8(i)  macro4(i);  macro4((i) + 4)
-#define macro16(i) macro8(i);  macro8((i) + 8)
-#define macro32(i) macro16(i); macro16((i) + 16)
-#define macro64(i) macro32(i); macro32((i) + 32)
-  macro64(0);
-  panic("pattern too long");
-#undef macro
-finish:
-  *key = __key >> __shift;
-  *mask = __mask >> __shift;
-  *shift = __shift;
-}
+#define OP_STR_SIZE 40
 
-__attribute__((always_inline))
-static inline void pattern_decode_hex(const char *str, int len,
-    uint64_t *key, uint64_t *mask, uint64_t *shift) {
-  uint64_t __key = 0, __mask = 0, __shift = 0;
-#define macro(i) \
-  if ((i) >= len) goto finish; \
-  else { \
-    char c = str[i]; \
-    if (c != ' ') { \
-      Assert((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '?', \
-          "invalid character '%c' in pattern string", c); \
-      __key  = (__key  << 4) | (c == '?' ? 0 : (c >= '0' && c <= '9') ? c - '0' : c - 'a' + 10); \
-      __mask = (__mask << 4) | (c == '?' ? 0 : 0xf); \
-      __shift = (c == '?' ? __shift + 4 : 0); \
-    } \
-  }
+typedef struct {
+  uint32_t type;
+  int width;
+  union {
+    uint32_t reg;
+    rtlreg_t addr;
+    uint32_t imm;
+    int32_t simm;
+  };
+  rtlreg_t val;
+  char str[OP_STR_SIZE];
+} Operand;
 
-  macro16(0);
-  panic("pattern too long");
-#undef macro
-finish:
-  *key = __key >> __shift;
-  *mask = __mask >> __shift;
-  *shift = __shift;
-}
+typedef struct {
+  uint32_t opcode;
+  vaddr_t seq_eip;  // sequential eip
+  bool is_operand_size_16;
+  uint8_t ext_opcode;
+  bool is_jmp;
+  vaddr_t jmp_eip;
+  Operand src, dest, src2;
+#ifdef DEBUG
+  char assembly[80];
+  char asm_buf[128];
+  char *p;
+#endif
+} DecodeInfo;
 
+typedef union {
+  struct {
+    uint8_t R_M		:3;
+    uint8_t reg		:3;
+    uint8_t mod		:2;
+  };
+  struct {
+    uint8_t dont_care	:3;
+    uint8_t opcode		:3;
+  };
+  uint8_t val;
+} ModR_M;
 
-// --- pattern matching wrappers for decode ---
-#define INSTPAT(pattern, ...) do { \
-  uint64_t key, mask, shift; \
-  pattern_decode(pattern, STRLEN(pattern), &key, &mask, &shift); \
-  if ((((uint64_t)INSTPAT_INST(s) >> shift) & mask) == key) { \
-    INSTPAT_MATCH(s, ##__VA_ARGS__); \
-    goto *(__instpat_end); \
-  } \
-} while (0)
+typedef union {
+  struct {
+    uint8_t base	:3;
+    uint8_t index	:3;
+    uint8_t ss		:2;
+  };
+  uint8_t val;
+} SIB;
 
-#define INSTPAT_START(name) { const void ** __instpat_end = &&concat(__instpat_end_, name);
-#define INSTPAT_END(name)   concat(__instpat_end_, name): ; }
+void load_addr(vaddr_t *, ModR_M *, Operand *);
+void read_ModR_M(vaddr_t *, Operand *, bool, Operand *, bool);
+
+void operand_write(Operand *, rtlreg_t *);
+
+/* shared by all helper functions */
+extern DecodeInfo decoding;
+
+#define id_src (&decoding.src)
+#define id_src2 (&decoding.src2)
+#define id_dest (&decoding.dest)
+
+#define make_DHelper(name) void concat(decode_, name) (vaddr_t *eip)
+typedef void (*DHelper) (vaddr_t *);
+
+make_DHelper(I2E);
+make_DHelper(I2a);
+make_DHelper(I2r);
+make_DHelper(SI2E);
+make_DHelper(SI_E2G);
+make_DHelper(I_E2G);
+make_DHelper(I_G2E);
+make_DHelper(I);
+make_DHelper(r);
+make_DHelper(E);
+make_DHelper(gp7_E);
+make_DHelper(test_I);
+make_DHelper(SI);
+make_DHelper(G2E);
+make_DHelper(E2G);
+
+make_DHelper(mov_I2r);
+make_DHelper(mov_I2E);
+make_DHelper(mov_G2E);
+make_DHelper(mov_E2G);
+make_DHelper(lea_M2G);
+
+make_DHelper(gp2_1_E);
+make_DHelper(gp2_cl2E);
+make_DHelper(gp2_Ib2E);
+
+make_DHelper(O2a);
+make_DHelper(a2O);
+
+make_DHelper(J);
+
+make_DHelper(push_SI);
+
+make_DHelper(in_I2a);
+make_DHelper(in_dx2a);
+make_DHelper(out_a2I);
+make_DHelper(out_a2dx);
 
 #endif

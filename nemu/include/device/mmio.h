@@ -1,24 +1,14 @@
-/***************************************************************************************
-* Copyright (c) 2014-2022 Zihao Yu, Nanjing University
-*
-* NEMU is licensed under Mulan PSL v2.
-* You can use this software according to the terms and conditions of the Mulan PSL v2.
-* You may obtain a copy of Mulan PSL v2 at:
-*          http://license.coscl.org.cn/MulanPSL2
-*
-* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-*
-* See the Mulan PSL v2 for more details.
-***************************************************************************************/
+#ifndef __MMIO_H__
+#define __MMIO_H__
 
-#ifndef __DEVICE_MMIO_H__
-#define __DEVICE_MMIO_H__
+#include "common.h"
 
-#include <common.h>
+typedef void(*mmio_callback_t)(paddr_t, int, bool);
 
-word_t mmio_read(paddr_t addr, int len);
-void mmio_write(paddr_t addr, int len, word_t data);
+void* add_mmio_map(paddr_t, int, mmio_callback_t);
+int is_mmio(paddr_t);
+
+uint32_t mmio_read(paddr_t, int, int);
+void mmio_write(paddr_t, int, uint32_t, int);
 
 #endif
