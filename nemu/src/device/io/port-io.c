@@ -1,49 +1,56 @@
-/***************************************************************************************
-* Copyright (c) 2014-2022 Zihao Yu, Nanjing University
-*
-* NEMU is licensed under Mulan PSL v2.
-* You can use this software according to the terms and conditions of the Mulan PSL v2.
-* You may obtain a copy of Mulan PSL v2 at:
-*          http://license.coscl.org.cn/MulanPSL2
-*
-* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-*
-* See the Mulan PSL v2 for more details.
-***************************************************************************************/
+#include "common.h"
+#include "device/port-io.h"
 
-#include <device/map.h>
+#define PORT_IO_SPACE_MAX 65536
+#define NR_MAP 8
 
-#define PORT_IO_SPACE_MAX 65535
+/* "+ 3" is for hacking, see pio_read() below */
+static uint8_t pio_space[PORT_IO_SPACE_MAX + 3];
 
-#define NR_MAP 16
-static IOMap maps[NR_MAP] = {};
+typedef struct {
+  ioaddr_t low;
+  ioaddr_t high;
+  pio_callback_t callback;
+} PIO_t;
+
+static PIO_t maps[NR_MAP];
 static int nr_map = 0;
 
+static void pio_callback(ioaddr_t addr, int len, bool is_write) {
+  int i;
+  for (i = 0; i < nr_map; i ++) {
+    if (addr >= maps[i].low && addr + len - 1 <= maps[i].high) {
+      maps[i].callback(addr, len, is_write);
+      return;
+    }
+  }
+}
+
 /* device interface */
-void add_pio_map(const char *name, ioaddr_t addr, void *space, uint32_t len, io_callback_t callback) {
+void* add_pio_map(ioaddr_t addr, int len, pio_callback_t callback) {
   assert(nr_map < NR_MAP);
   assert(addr + len <= PORT_IO_SPACE_MAX);
-  maps[nr_map] = (IOMap){ .name = name, .low = addr, .high = addr + len - 1,
-    .space = space, .callback = callback };
-  Log("Add port-io map '%s' at [" FMT_PADDR ", " FMT_PADDR "]",
-      maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);
-
+  maps[nr_map].low = addr;
+  maps[nr_map].high = addr + len - 1;
+  maps[nr_map].callback = callback;
   nr_map ++;
+  return pio_space + addr;
 }
+
 
 /* CPU interface */
 uint32_t pio_read(ioaddr_t addr, int len) {
+  assert(len == 1 || len == 2 || len == 4);
   assert(addr + len - 1 < PORT_IO_SPACE_MAX);
-  int mapid = find_mapid_by_addr(maps, nr_map, addr);
-  assert(mapid != -1);
-  return map_read(addr, len, &maps[mapid]);
+  pio_callback(addr, len, false);		// prepare data to read
+  uint32_t data = *(uint32_t *)(pio_space + addr) & (~0u >> ((4 - len) << 3));
+  return data;
 }
 
 void pio_write(ioaddr_t addr, int len, uint32_t data) {
+  assert(len == 1 || len == 2 || len == 4);
   assert(addr + len - 1 < PORT_IO_SPACE_MAX);
-  int mapid = find_mapid_by_addr(maps, nr_map, addr);
-  assert(mapid != -1);
-  map_write(addr, len, data, &maps[mapid]);
+  memcpy(pio_space + addr, &data, len);
+  pio_callback(addr, len, true);
 }
+
