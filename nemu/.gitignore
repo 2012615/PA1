@@ -1,8 +1,12 @@
 *.*
 *
 !*/
-!Makefile*
+!Makefile
+!*.mk
 !*.[cSh]
+!*.cc
 !.gitignore
 !README.md
-!runall.sh
+!Kconfig
+include/config
+include/generated
