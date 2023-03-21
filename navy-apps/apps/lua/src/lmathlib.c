@@ -11,7 +11,7 @@
 
 
 #include <stdlib.h>
-#include <mymath.h>
+#include <math.h>
 
 #include "lua.h"
 
@@ -246,11 +246,7 @@ static int math_max (lua_State *L) {
 */
 static int math_random (lua_State *L) {
   lua_Integer low, up;
-#if LUA_FLOAT_TYPE == LUA_FLOAT_INT
-  int r = 0;
-#else
   double r = (double)l_rand() * (1.0 / ((double)L_RANDMAX + 1.0));
-#endif
   switch (lua_gettop(L)) {  /* check number of arguments */
     case 0: {  /* no arguments */
       lua_pushnumber(L, (lua_Number)r);  /* Number between 0 and 1 */
@@ -272,11 +268,7 @@ static int math_random (lua_State *L) {
   luaL_argcheck(L, low <= up, 1, "interval is empty");
   luaL_argcheck(L, low >= 0 || up <= LUA_MAXINTEGER + low, 1,
                    "interval too large");
-#if LUA_FLOAT_TYPE == LUA_FLOAT_INT
-  r = rand() % (up - low) + low;
-#else
   r *= (double)(up - low) + 1.0;
-#endif
   lua_pushinteger(L, (lua_Integer)r + low);
   return 1;
 }
@@ -405,10 +397,10 @@ static const luaL_Reg mathlib[] = {
 */
 LUAMOD_API int luaopen_math (lua_State *L) {
   luaL_newlib(L, mathlib);
-  //lua_pushnumber(L, PI);
-  //lua_setfield(L, -2, "pi");
-  //lua_pushnumber(L, (lua_Number)HUGE_VAL);
-  //lua_setfield(L, -2, "huge");
+  lua_pushnumber(L, PI);
+  lua_setfield(L, -2, "pi");
+  lua_pushnumber(L, (lua_Number)HUGE_VAL);
+  lua_setfield(L, -2, "huge");
   lua_pushinteger(L, LUA_MAXINTEGER);
   lua_setfield(L, -2, "maxinteger");
   lua_pushinteger(L, LUA_MININTEGER);

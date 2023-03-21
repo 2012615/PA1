@@ -1,4 +1,6 @@
 NAME = nterm
-SRCS = $(shell find src/ -name "*.cpp")
-LIBS += libminiSDL libbdf
-include $(NAVY_HOME)/Makefile
+SRCS = src/main.cpp src/term.cpp
+LIBS += libfont libndl
+
+export NWM_APP
+include $(NAVY_HOME)/Makefile.app

@@ -813,7 +813,7 @@ static int str_gsub (lua_State *L) {
 ** Hexadecimal floating-point formatter
 */
 
-#include <mymath.h>
+#include <math.h>
 
 #define SIZELENMOD	(sizeof(LUA_NUMBER_FRMLEN)/sizeof(char))
 
@@ -839,9 +839,6 @@ static lua_Number adddigit (char *buff, int n, lua_Number x) {
 
 
 static int num2straux (char *buff, int sz, lua_Number x) {
-#if LUA_FLOAT_TYPE == LUA_FLOAT_INT
-  return lua_number2str(buff, sz, x);
-#else
   /* if 'inf' or 'NaN', format it like '%g' */
   if (x != x || x == (lua_Number)HUGE_VAL || x == -(lua_Number)HUGE_VAL)
     return l_sprintf(buff, sz, LUA_NUMBER_FMT, (LUAI_UACNUMBER)x);
@@ -870,7 +867,6 @@ static int num2straux (char *buff, int sz, lua_Number x) {
     lua_assert(n < sz);
     return n;
   }
-#endif
 }
 
 
@@ -897,11 +893,7 @@ static int lua_number2strx (lua_State *L, char *buff, int sz,
 ** is maximum exponent + 1). (99+3+1 then rounded to 120 for "extra
 ** expenses", such as locale-dependent stuff)
 */
-#if LUA_FLOAT_TYPE == LUA_FLOAT_INT
-#define MAX_ITEM        (120 + 20)
-#else
 #define MAX_ITEM        (120 + l_mathlim(MAX_10_EXP))
-#endif
 
 
 /* valid flags in a format specification */

@@ -4,28 +4,6 @@
 #include <nwm.h>
 #include <string.h>
 
-static const char *nterm_argv[] = { "/bin/nterm", NULL };
-static const char *nslider_argv[] = { "/bin/nslider", NULL };
-static const char *fceux_argv[] = { "/bin/fceux", NULL };
-static const char *pal_argv[] = { "/bin/pal", NULL };
-static const char *nplayer_argv[] = { "/bin/nplayer", NULL };
-static const char *typing_argv[] = { "/bin/typing-game", NULL };
-static const char *onscripter_argv[] = { "/bin/onscripter", "-r", "/share/games/onscripter/clannad", NULL };
-
-static const struct {
-  const char *name;
-  const char *bin;
-  const char *const *argv;
-} default_apps [] = {
-  { "Terminal", nterm_argv[0], nterm_argv },
-  { "NSlider", nslider_argv[0], nslider_argv },
-  { "Typing Game", typing_argv[0], typing_argv },
-  { "FCEUX", fceux_argv[0], fceux_argv },
-  { "NPlayer", nplayer_argv[0], nplayer_argv },
-  { "Pal", pal_argv[0], pal_argv },
-  { "ONScripter", onscripter_argv[0], onscripter_argv },
-};
-
 class BgImage: public Window {
 public:
   BgImage(WindowManager *wm, int width, int height): Window(wm, nullptr, nullptr, nullptr) {
@@ -63,10 +41,9 @@ class WindowSwitcher: public Window {
             ( y * win->h / h1 ) * win->w + 
             ( x * win->w / w1 )
           ];
-        col &= 0xffffff;
-        //if (col & 0xff000000) {
-        //  col = border_col;
-        //}
+        if (col & 0xff000000) {
+          col = border_col;
+        }
         draw_px(basex + x + (w - w1) / 2, basey + y + (h - h1) / 2, col);
       }
   }
@@ -128,6 +105,13 @@ public:
   }
 };
 
+
+static const char *names[] = {
+  "Terminal",
+  "LiteNES",
+  "Pal",
+};
+
 class AppFinder: public Window {
   static const int item_size = 38, item_pad = 6, icon_size = 32;
   int n, cur, cutline;
@@ -135,7 +119,7 @@ class AppFinder: public Window {
 public:
   // TODO: read icons and commands from a configuration file.
   AppFinder(WindowManager *wm): Window(wm, nullptr, nullptr, nullptr) {
-    n = sizeof(default_apps) / sizeof(default_apps[0]);
+    n = 3;
     cur = 0;
 
     resize(item_size * n + item_pad * (n + 1), item_size + item_pad);
@@ -155,7 +139,7 @@ public:
   }
 
   void draw_item(int idx, int x, int y) {
-    BDF_Font *font = wm->font;
+    Font *font = wm->font;
     if (idx == cur) {
       for (int i = 0; i < item_size; i ++) {
         for (int j = 0; j < item_size; j ++) {
@@ -182,7 +166,7 @@ public:
       }
 
     int dx = 0, dy = 0;
-    for (const char *p = default_apps[idx].name; *p; p ++) {
+    for (const char *p = names[idx]; *p; p ++) {
       if (dx + font->w >= icon_size) {
         dx = 0; dy += font->h;
       }
@@ -213,13 +197,12 @@ public:
   }
 
   const char *getcmd() {
-    assert(cur < n);
-    return default_apps[cur].bin;
-  }
-
-  const char *const *getargv() {
-    assert(cur < n);
-    return default_apps[cur].argv;
+    switch (cur) {
+      case 0: return "../nterm/build/nterm-native";
+      case 1: return "../litenes/build/litenes-native";
+      case 2: return "../pal/build/pal-native";
+    }
+    assert(0);
   }
 };
 

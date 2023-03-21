@@ -1,3 +1,4 @@
 NAME = libndl
-SRCS = NDL.c
-include $(NAVY_HOME)/Makefile
+SRCS = $(shell find src/ -name "*.c")
+
+include $(NAVY_HOME)/Makefile.lib

@@ -1,7 +1,4 @@
-#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
-#endif
-
 #include <unistd.h>
 #include <dlfcn.h>
 #include <assert.h>
@@ -12,40 +9,40 @@
 #include <string.h>
 #include <stdlib.h>
 #include <SDL2/SDL.h>
-#include <sys/mman.h>
-#include <sys/ioctl.h>
 
-//#define MODE_800x600
-
-#define FPS 60
-#ifdef MODE_800x600
-const int disp_w = 800, disp_h = 600;
-#else
 const int disp_w = 400, disp_h = 300;
-#endif
-static int pipe_size = 0;
-#define FB_SIZE (disp_w * disp_h * sizeof(uint32_t))
+const char *SHM_FILE = "/dev/shm/navy-fb";
+const char *FIFO_FILE = "/tmp/navy-fifo";
+const char *NWM_FILE = "/tmp/nwm-fifo";
 
-static FILE *(*glibc_fopen)(const char *path, const char *mode) = NULL;
-static int (*glibc_open)(const char *path, int flags, ...) = NULL;
-static ssize_t (*glibc_read)(int fd, void *buf, size_t count) = NULL;
-static ssize_t (*glibc_write)(int fd, const void *buf, size_t count) = NULL;
-static int (*glibc_execve)(const char *filename, char *const argv[], char *const envp[]) = NULL;
+static FILE *(*real_fopen)(const char *path, const char *mode) = NULL;
 
-static SDL_Window *window = NULL;
-static SDL_Renderer *renderer = NULL;
-static SDL_Texture *texture = NULL;
-static int dummy_fd = -1;
-static int dispinfo_fd = -1;
-static int fb_memfd = -1;
-static int evt_fd = -1;
-static int sb_fifo[2] = {-1, -1};
-static int sbctl_fd = -1;
-static uint32_t *fb = NULL;
-static char fsimg_path[512] = "";
+int W, H;
+#define FPS 30
 
-static inline void get_fsimg_path(char *newpath, const char *path) {
-  sprintf(newpath, "%s%s", fsimg_path, path);
+static SDL_Window *window;
+static SDL_Renderer *renderer;
+static SDL_Texture *texture;
+static int shm_fd = -1;
+static FILE *fifo_r = NULL;
+static int fifo_w = -1, nwm_r = -1, nwm_w = -1;
+static uint32_t fb[640 * 480];
+static uint32_t buf[640 * 480];
+static bool fbdev_opened = false;
+
+static void draw_sync() {
+  if (fbdev_opened) {
+    if (shm_fd < 0) return;
+    lseek(shm_fd, 0, SEEK_SET);
+    int nread = read(shm_fd, buf, W * H * 4);
+    for (int i = 0; i < W * H; i ++) {
+      fb[i] = buf[i];
+    }
+  }
+  SDL_UpdateTexture(texture, NULL, fb, W * sizeof(Uint32));
+  SDL_RenderClear(renderer);
+  SDL_RenderCopy(renderer, texture, NULL, NULL);
+  SDL_RenderPresent(renderer);
 }
 
 #define _KEYS(_) \
@@ -60,17 +57,75 @@ static inline void get_fsimg_path(char *newpath, const char *path) {
 #define COND(k) \
   if (scancode == SDL_SCANCODE_##k) name = #k;
 
-static void update_screen() {
-  SDL_UpdateTexture(texture, NULL, fb, disp_w * sizeof(Uint32));
-  SDL_RenderClear(renderer);
-  SDL_RenderCopy(renderer, texture, NULL, NULL);
-  SDL_RenderPresent(renderer);
-}
+struct StateMachine {
+  enum State {
+    WAIT_ESC = 0,
+    WAIT_BRK,
+    WAIT_X,
+    X,
+    Y,
+    WAIT_B1,
+    WAIT_B2,
+    WAIT_B3,
+    WAIT_B4,
+    WAIT_NXT,
+  };
+  State state;
+  int x, y;
+  uint32_t px;
 
-#define KEY_QUEUE_LEN 64
-static SDL_Event key_queue[KEY_QUEUE_LEN] = {};
-static int key_f = 0, key_r = 0;
-static SDL_mutex *key_queue_lock = NULL;
+  void clear() {
+    state = WAIT_ESC;
+    x = y = 0; px = 0;
+  }
+
+  bool accept(uint8_t ch) {
+    // frequent branches
+    if (state == WAIT_B1) { px |= ch; state = WAIT_B2; return false; }
+    if (state == WAIT_B2) { px |= ch << 8; state = WAIT_B3; return false; }
+    if (state == WAIT_B3) { px |= ch << 16; state = WAIT_B4; return false; }
+    if (state == WAIT_B4) { state = WAIT_NXT; return true; }
+    if (state == WAIT_NXT && ch == ';') { px = 0; state = WAIT_B1; x ++; return false; }
+
+    if (state == WAIT_ESC && ch == '\033') { state = WAIT_BRK; return false; }
+    if (state == WAIT_BRK && ch == '[') { state = WAIT_X; return false; }
+    if (state == WAIT_X && ch == 'X') { state = X; return false; }
+    if (state == X && ch >= '0' && ch <= '9') { x = x * 10 + ch - '0'; return false; }
+    if (state == X && ch == ';') { state = Y; return false; }
+    if (state == Y && ch >= '0' && ch <= '9') { y = y * 10 + ch - '0'; return false; }
+    if (state == Y && ch == ';') { state = WAIT_B1; return false; }
+    if (state == Y && ch == 's') { 
+      W = x; H = y;
+      // TODO: there is a race condition on W
+      // but generally it is harmless.
+      SDL_SetWindowSize(window, W * 2, H * 2);
+      texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, W, H);
+      clear();
+      state = WAIT_ESC; return false;
+    }
+    clear();
+    return false;
+  }
+};
+
+static int nwm_thread(void *args) {
+  static char buf[1 << 20];
+  StateMachine s;
+  s.clear();
+  while (1) {
+    usleep(1000);
+    if (nwm_r == -1) continue;
+    int nread = read(nwm_r, buf, sizeof(buf));
+    if (nread == -1) continue;
+
+    for (int i = 0; i < nread; i ++) {
+      if (s.accept(buf[i])) {
+        int idx = s.x + s.y * W;
+        fb[idx] = s.px;
+      }
+    }
+  }
+}
 
 static int event_thread(void *args) {
   SDL_Event event;
@@ -79,200 +134,136 @@ static int event_thread(void *args) {
 
     switch (event.type) {
       case SDL_QUIT: exit(0); break;
-      case SDL_USEREVENT: update_screen(); break;
-      case SDL_KEYDOWN:
-      case SDL_KEYUP:
-        SDL_LockMutex(key_queue_lock);
-        key_queue[key_r] = event;
-        key_r = (key_r + 1) % KEY_QUEUE_LEN;
-        assert(key_r != key_f);
-        SDL_UnlockMutex(key_queue_lock);
+      case SDL_USEREVENT:
+        if (event.user.code == 0) {
+          static int tsc = 0;
+          tsc ++;
+          if (fifo_w != -1) {
+            char buf[256];
+            sprintf(buf, "t %d\n", tsc * (1000 / FPS));
+            write(fifo_w, buf, strlen(buf));
+          }
+          draw_sync();
+        }
         break;
+      case SDL_KEYDOWN:
+      case SDL_KEYUP: {
+        SDL_Keysym k = event.key.keysym;
+        int keydown = event.key.type == SDL_KEYDOWN;
+        int scancode = k.scancode;
+
+        const char *name = NULL;
+        _KEYS(COND);
+        if (name) {
+          char cmd[128];
+          sprintf(cmd, "%s %s\n", keydown ? "kd" : "ku", name);
+          write(fifo_w, cmd, strlen(cmd));
+        }
+        break;
+      }
     }
   }
-  return 0;
 }
 
-static uint32_t timer_handler(uint32_t interval, void *param) {
+static Uint32 timer(Uint32 interval, void *param) {
   SDL_Event event;
+  SDL_UserEvent user;
+  user.type = SDL_USEREVENT;
+  user.code = 0;
   event.type = SDL_USEREVENT;
+  event.user = user;
   SDL_PushEvent(&event);
   return interval;
 }
 
-static void audio_fill(void *userdata, uint8_t *stream, int len) {
-  int nread = glibc_read(sb_fifo[0], stream, len);
-  if (nread == -1) nread = 0;
-  if (nread < len) memset(stream + nread, 0, len - nread);
-}
-
 static void open_display() {
-  SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER);
-#ifdef MODE_800x600
-  SDL_CreateWindowAndRenderer(disp_w, disp_h, 0, &window, &renderer);
-#else
-  SDL_CreateWindowAndRenderer(disp_w * 2, disp_h * 2, 0, &window, &renderer);
-#endif
-  SDL_SetWindowTitle(window, "Simulated Nanos Application");
+  SDL_Init(SDL_INIT_VIDEO);
+  SDL_CreateWindowAndRenderer(W * 2, H * 2, 0, &window, &renderer);
+  SDL_SetWindowTitle(window, getenv("NWM_APP") ? "Simulated NWM Application" : "Simulated Nanos Application");
+  SDL_AddTimer(1000 / FPS, timer, nullptr);
   SDL_CreateThread(event_thread, "event thread", nullptr);
-  SDL_AddTimer(1000 / FPS, timer_handler, NULL);
-  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, disp_w, disp_h);
-
-  fb_memfd = memfd_create("fb", 0);
-  assert(fb_memfd != -1);
-  int ret = ftruncate(fb_memfd, FB_SIZE);
-  assert(ret == 0);
-  fb = (uint32_t *)mmap(NULL, FB_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fb_memfd, 0);
-  assert(fb != (void *)-1);
-  memset(fb, 0, FB_SIZE);
-  lseek(fb_memfd, 0, SEEK_SET);
+  SDL_CreateThread(nwm_thread, "nwm thread", nullptr);
+  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, W, H);
+  shm_fd = open(SHM_FILE, O_CREAT | O_RDWR, 0666);
+  assert(shm_fd >= 0);
+  memset(fb, 0x0, W * H * sizeof(uint32_t));
+  lseek(shm_fd, 0, SEEK_SET);
+  write(shm_fd, fb, W * H * sizeof(uint32_t));
 }
 
-static void open_event() {
-  key_queue_lock = SDL_CreateMutex();
-  evt_fd = dup(dummy_fd);
-}
-
-static void open_audio() {
-  int ret = pipe2(sb_fifo, O_NONBLOCK);
-  assert(ret == 0);
-  sbctl_fd = dup(dummy_fd);
-  pipe_size = fcntl(sb_fifo[0], F_GETPIPE_SZ);
-}
-
-static const char* redirect_path(char *newpath, const char *path) {
-  get_fsimg_path(newpath, path);
-  if (0 == access(newpath, 0)) {
-    fprintf(stderr, "Redirecting file open: %s -> %s\n", path, newpath);
-    return newpath;
+static void open_fifo() {
+  if (!real_fopen) {
+    real_fopen = (FILE*(*)(const char*, const char*))dlsym(RTLD_NEXT, "fopen");
   }
-  return path;
+
+  mkfifo(FIFO_FILE, 0666);
+  fifo_w = open(FIFO_FILE, O_RDWR);
+  fifo_r = real_fopen(FIFO_FILE, "r");
 }
 
 extern "C" FILE *fopen(const char *path, const char *mode);
-extern "C" int open(const char *path, int flags, ...);
-extern "C" ssize_t read(int fd, void *buf, size_t count);
-extern "C" ssize_t write(int fd, const void *buf, size_t count);
-extern "C" int execve(const char *filename, char *const argv[], char *const envp[]);
 
 FILE *fopen(const char *path, const char *mode) {
-  char newpath[512];
-  if (glibc_fopen == NULL) {
-    glibc_fopen = (FILE*(*)(const char*, const char*))dlsym(RTLD_NEXT, "fopen");
-    assert(glibc_fopen != NULL);
-  }
-  return glibc_fopen(redirect_path(newpath, path), mode);
-}
+  char newpath[1024];
 
-int open(const char *path, int flags, ...) {
-  if (strcmp(path, "/proc/dispinfo") == 0) {
-    return dispinfo_fd;
+  if (!real_fopen) {
+    real_fopen = (FILE*(*)(const char*, const char*))dlsym(RTLD_NEXT, "fopen");
+  }
+
+  if (strcmp(path, "/dev/fb") == 0) {
+    if (shm_fd == -1) {
+      W = disp_w;
+      H = disp_h;
+      open_display();
+    }
+    assert(shm_fd != -1);
+    fbdev_opened = true;
+    return real_fopen(SHM_FILE, mode);
   } else if (strcmp(path, "/dev/events") == 0) {
-    return evt_fd;
-  } else if (strcmp(path, "/dev/fb") == 0) {
-    return fb_memfd;
-  } else if (strcmp(path, "/dev/sb") == 0) {
-    return sb_fifo[1];
-  } else if (strcmp(path, "/dev/sbctl") == 0) {
-    return sbctl_fd;
+    if (shm_fd == -1) {
+      open_display();
+    }
+    if (fifo_w == -1) {
+      open_fifo();
+    }
+    return fifo_r;
+  } else if (strcmp(path, "/proc/dispinfo") == 0) {
+    char tmpfile[128];
+    strcpy(tmpfile, "/tmp/navy-XXXXXX");
+    mktemp(tmpfile);
+    FILE *fp = fopen(tmpfile, "w"); assert(fp);
+    fprintf(fp, "WIDTH: %d\n", disp_w);
+    fprintf(fp, "HEIGHT: %d\n", disp_h);
+    fclose(fp);
+    return real_fopen(tmpfile, mode);
   } else {
-    char newpath[512];
-    return glibc_open(redirect_path(newpath, path), flags);
-  }
-}
-
-ssize_t read(int fd, void *buf, size_t count) {
-  if (fd == dispinfo_fd) {
-    return snprintf((char *)buf, count, "WIDTH: %d\nHEIGHT: %d\n", disp_w, disp_h);
-  } else if (fd == evt_fd) {
-    int has_key = 0;
-    SDL_Event ev = {};
-    SDL_LockMutex(key_queue_lock);
-    if (key_f != key_r) {
-      ev = key_queue[key_f];
-      key_f = (key_f + 1) % KEY_QUEUE_LEN;
-      has_key = 1;
+    strcpy(newpath, getenv("NAVY_HOME"));
+    strcat(newpath, "/fsimg");
+    strcat(newpath, path);
+    if (0 == access(newpath, 0)) {
+      fprintf(stderr, "Redirecting file open: %s -> %s\n", path, newpath);
+    } else {
+      strcpy(newpath, path);
     }
-    SDL_UnlockMutex(key_queue_lock);
-
-    if (has_key) {
-      SDL_Keysym k = ev.key.keysym;
-      int keydown = ev.key.type == SDL_KEYDOWN;
-      int scancode = k.scancode;
-
-      const char *name = NULL;
-      _KEYS(COND);
-      if (name) return snprintf((char *)buf, count, "k%c %s\n", keydown ? 'd' : 'u', name);
-    }
-    return 0;
-  } else if (fd == sbctl_fd) {
-    // return the free space of sb_fifo
-    int used;
-    ioctl(sb_fifo[0], FIONREAD, &used);
-    int free = pipe_size - used;
-    return snprintf((char *)buf, count, "%d", free);
   }
-  return glibc_read(fd, buf, count);
-}
 
-ssize_t write(int fd, const void *buf, size_t count) {
-  if (fd == sbctl_fd) {
-    // open audio
-    const int *args = (const int *)buf;
-    assert(count >= sizeof(int) * 3);
-    SDL_InitSubSystem(SDL_INIT_AUDIO);
-    SDL_AudioSpec spec = {0};
-    spec.freq = args[0];
-    spec.channels = args[1];
-    spec.samples = args[2];
-    spec.userdata = NULL;
-    spec.callback = audio_fill;
-    SDL_OpenAudio(&spec, NULL);
-    SDL_PauseAudio(0);
-    return count;
-  }
-  return glibc_write(fd, buf, count);
-}
-
-int execve(const char *filename, char *const argv[], char *const envp[]) {
-  char newpath[512];
-  glibc_execve(redirect_path(newpath, filename), argv, envp);
-  return -1;
+  return real_fopen(newpath, mode);
 }
 
 struct Init {
   Init() {
-    glibc_fopen = (FILE*(*)(const char*, const char*))dlsym(RTLD_NEXT, "fopen");
-    assert(glibc_fopen != NULL);
-    glibc_open = (int(*)(const char*, int, ...))dlsym(RTLD_NEXT, "open");
-    assert(glibc_open != NULL);
-    glibc_read = (ssize_t (*)(int fd, void *buf, size_t count))dlsym(RTLD_NEXT, "read");
-    assert(glibc_read != NULL);
-    glibc_write = (ssize_t (*)(int fd, const void *buf, size_t count))dlsym(RTLD_NEXT, "write");
-    assert(glibc_write != NULL);
-    glibc_execve = (int(*)(const char*, char *const [], char *const []))dlsym(RTLD_NEXT, "execve");
-    assert(glibc_execve != NULL);
-
-    dummy_fd = memfd_create("dummy", 0);
-    assert(dummy_fd != -1);
-    dispinfo_fd = dummy_fd;
-
-    char *navyhome = getenv("NAVY_HOME");
-    assert(navyhome);
-    sprintf(fsimg_path, "%s/fsimg", navyhome);
-
-    char newpath[512];
-    get_fsimg_path(newpath, "/bin");
-    setenv("PATH", newpath, 1); // overwrite the current PATH
-
-    SDL_Init(0);
-    if (!getenv("NWM_APP")) {
+    if (getenv("NWM_APP")) {
+      open_fifo();
       open_display();
-      open_event();
+      W = H = 0;
+      mkfifo(NWM_FILE, 0666);
+      nwm_w = open(NWM_FILE, O_RDWR);
+      nwm_r = open(NWM_FILE, O_RDONLY | O_NONBLOCK);
+      assert(nwm_w != -1 && nwm_r != -1);
+
+      freopen(FIFO_FILE, "r", stdin);
+      freopen(NWM_FILE, "w", stdout);
     }
-    open_audio();
-  }
-  ~Init() {
   }
 };
 

@@ -1,16 +1,32 @@
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-
 #include <nwm.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
-#include <sys/mman.h>
-#ifdef __ISA_NATIVE__
-#include <sys/prctl.h>
-#include <signal.h>
-#endif
+
+void Window::StateMachine::reset() {
+  state = WAIT_ESC;
+  x = y = 0; px = 0;
+}
+
+bool Window::StateMachine::feed(uint8_t ch) {
+  // frequent branches
+  if (state == WAIT_B1) { px |= ch; state = WAIT_B2; return false; }
+  if (state == WAIT_B2) { px |= ch << 8; state = WAIT_B3; return false; }
+  if (state == WAIT_B3) { px |= ch << 16; state = WAIT_B4; return false; }
+  if (state == WAIT_B4) { state = WAIT_NXT; return true; }
+  if (state == WAIT_NXT && ch == ';') { px = 0; state = WAIT_B1; x ++; return false; }
+
+  if (state == WAIT_ESC && ch == '\033') { state = WAIT_BRK; return false; }
+  if (state == WAIT_BRK && ch == '[') { state = WAIT_X; return false; }
+  if (state == WAIT_X && ch == 'X') { state = X; return false; }
+  if (state == X && ch >= '0' && ch <= '9') { x = x * 10 + ch - '0'; return false; }
+  if (state == X && ch == ';') { state = Y; return false; }
+  if (state == Y && ch >= '0' && ch <= '9') { y = y * 10 + ch - '0'; return false; }
+  if (state == Y && ch == ';') { state = WAIT_B1; return false; }
+  if (state == Y && ch == 's') { assert(win); win->resize(x, y); state = WAIT_ESC; return false; }
+  reset();
+  return false;
+}
 
 void Window::draw_raw_px(int x, int y, uint32_t color) {
   if (x >= 0 && y >= 0 && x < w && y < h) {
@@ -23,7 +39,7 @@ void Window::draw_px(int x, int y, uint32_t color) {
   draw_raw_px(x + dx, y + dy, color);
 }
 
-void Window::draw_ch(BDF_Font *font, int x, int y, char ch, uint32_t color) {
+void Window::draw_ch(Font *font, int x, int y, char ch, uint32_t color) {
   uint32_t *bm = font->font[ch];
   if (!bm) return;
   for (int j = 0; j < font->h; j ++)
@@ -33,7 +49,7 @@ void Window::draw_ch(BDF_Font *font, int x, int y, char ch, uint32_t color) {
       }
 }
 
-void Window::draw_raw_ch(BDF_Font *font, int x, int y, char ch, uint32_t color) {
+void Window::draw_raw_ch(Font *font, int x, int y, char ch, uint32_t color) {
   uint32_t *bm = font->font[ch];
   if (!bm) return;
   for (int j = 0; j < font->h; j ++)
@@ -50,15 +66,15 @@ void Window::draw() {
     }
 }
 
-Window::Window(WindowManager *wm, const char *cmd, const char * const *argv, const char **envp) {
+Window::Window(WindowManager *wm, const char *cmd, const char **argv, const char **envp) {
   this->wm = wm;
   x = y = w = h = 0;
   canvas = nullptr;
-  fb = nullptr;
+  esc_state.reset();
+  esc_state.win = this;
 
   if (cmd) {
     has_titlebar = true;
-    has_alpha = false;
     const char *title = cmd;
     for (const char *p = cmd; *p; p ++) {
       if (*p == '/') title = p + 1;
@@ -66,42 +82,39 @@ Window::Window(WindowManager *wm, const char *cmd, const char * const *argv, con
     strcpy(this->title, title);
 
     // create child process
-    assert(0 == pipe2(nwm_to_app, O_NONBLOCK));
-    assert(0 == pipe2(app_to_nwm, O_NONBLOCK));
+    assert(0 == pipe(nwm_to_app));
+    assert(0 == pipe(app_to_nwm));
 
     read_fd = app_to_nwm[0];
     write_fd = nwm_to_app[1];
-    fbdev_fd = memfd_create("nwm-fbdev", 0);
 
-    pid_t p = fork();
+    int flags = fcntl(read_fd, F_GETFL, 0);
+    fcntl(read_fd, F_SETFL, flags | O_NONBLOCK);
+
+    int stdin_fd = dup(0);
+    int stdout_fd = dup(1);
+    int stderr_fd = dup(2);
+
+    dup2(nwm_to_app[0], 0);
+    dup2(app_to_nwm[1], 1);
+    dup2(app_to_nwm[1], 2);
+
+    pid_t p = vfork();
     if (p == 0) { // child
-#ifdef __ISA_NATIVE__
-      // install a parent death signal in the chlid
-      int r = prctl(PR_SET_PDEATHSIG, SIGTERM);
-      if (r == -1) {
-        perror("prctl error");
-        assert(0);
-      }
-#endif
-
-      // FIXME: what if they are overlapped
-      dup2(nwm_to_app[0], 3);
-      dup2(app_to_nwm[1], 4);
-      dup2(fbdev_fd, 5);
-
-      // close enough files, which fixes the fork-after-SDL issue
-      for (int i = 6; i < 20; i ++) close(i);
-
       execve(argv[0], (char**)argv, (char**)envp);
       assert(0);
     } else {
+      dup2(stdin_fd, 0);
+      dup2(stdout_fd, 1);
+      dup2(stderr_fd, 2);
+      close(stdin_fd);
+      close(stdout_fd);
+      close(stderr_fd);
     }
   } else {
     // an internal window (without title bar)
-    has_alpha = true;
     has_titlebar = false;
     read_fd = write_fd = -1;
-    fbdev_fd = -1;
   }
 }
 
@@ -119,13 +132,6 @@ void Window::center() {
 void Window::resize(int width, int height) {
   draw();
 
-  if (canvas) {
-    delete [] canvas;
-    canvas = nullptr;
-  }
-
-  if (fbdev_fd != -1) munmap(fb, fw * fh * sizeof(uint32_t));
-
   if (has_titlebar) {
     this->w = width + border_px * 2;
     this->h = height + border_px * 2 + title_px;
@@ -137,17 +143,9 @@ void Window::resize(int width, int height) {
     this->dx = 0;
     this->dy = 0;
   }
-  this->fw = width; // frame buffer w/h
-  this->fh = height;
-
-  if (fbdev_fd != -1) {
-    int fbsize = fw * fh * sizeof(uint32_t);
-    ftruncate(fbdev_fd, fbsize);
-    fb = (uint32_t *)mmap(NULL, fbsize, PROT_READ | PROT_WRITE, MAP_SHARED, fbdev_fd, 0);
-    assert(fb != (void *) -1);
-    write(write_fd, "mmap ok", 7);
-  }
-
+  this->cw = width; // canvas w/h
+  this->ch = height;
+  if (canvas) delete [] canvas;
   canvas = new uint32_t[w * h];
 
   for (int i = 0; i < w; i ++)
@@ -179,16 +177,7 @@ void Window::resize(int width, int height) {
 }
 
 Window::~Window() {
-  if (canvas) {
-    delete [] canvas;
-    canvas = nullptr;
-  }
-  if (fbdev_fd != -1) {
-    munmap(fb, fw * fh * sizeof(uint32_t));
-    fb = nullptr;
-    close(fbdev_fd);
-    fbdev_fd = -1;
-  }
+  delete [] canvas;
   if (read_fd != -1) {
      // close pipes
     for (int i = 0; i < 2; i ++) {
@@ -200,19 +189,16 @@ Window::~Window() {
 
 void Window::update() {
   if (read_fd != -1) {
+    char buf[64 * 1024];
     do {
-      char buf[64];
-      int nread = read(read_fd, buf, sizeof(buf) - 1); // this a non-blocking read
+      int nread = read(read_fd, buf, sizeof(buf)); // this a non-blocking read
       if (nread == -1) break;
-      buf[nread] = '\0';
-      int w, h;
-      int ret = sscanf(buf, "%d %d", &w, &h);
-      if (ret == 2) resize(w, h);
+      for (int i = 0; i < nread; i ++) {
+        if (esc_state.feed(buf[i])) {
+          draw_px(esc_state.x, esc_state.y, esc_state.px);
+        }
+      }
     } while (1);
-    int y;
-    for (y = 0; y < fh; y ++) {
-      memcpy(&canvas[(dy + y) * w + dx], &fb[y * fw], fw * sizeof(uint32_t));
-    }
-    draw();
   }
 }
+
