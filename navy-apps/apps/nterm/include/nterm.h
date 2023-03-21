@@ -2,7 +2,13 @@
 #define __NTERM_H__
 
 #include <stdint.h>
-#include <unistd.h>
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define W 48
+#define H 16
 
 class Terminal {
 private:
@@ -64,5 +70,9 @@ public:
   void clear(); // clear dirty states
   const char *keypress(char ch);
 };
+
+extern Terminal *term;
+
+void refresh_terminal();
 
 #endif

@@ -114,6 +114,7 @@
 #define LUA_FLOAT_FLOAT		1
 #define LUA_FLOAT_DOUBLE	2
 #define LUA_FLOAT_LONGDOUBLE	3
+#define LUA_FLOAT_INT	4
 
 #if defined(LUA_32BITS)		/* { */
 /*
@@ -132,6 +133,11 @@
 */
 #define LUA_INT_TYPE	LUA_INT_LONG
 #define LUA_FLOAT_TYPE	LUA_FLOAT_DOUBLE
+
+#elif defined(LUA_INTONLY_NUMBERS)	/* }{ */
+
+#define LUA_INT_TYPE	LUA_INT_LONG
+#define LUA_FLOAT_TYPE	LUA_FLOAT_INT
 
 #endif				/* } */
 
@@ -444,10 +450,14 @@
 ** has an exact representation as a float; MAXINTEGER may not have one,
 ** and therefore its conversion to float may have an ill-defined value.)
 */
+#if LUA_FLOAT_TYPE == LUA_FLOAT_INT
+#define lua_numbertointeger(n,p) (*(p) = (LUA_INTEGER)(n), 1)
+#else
 #define lua_numbertointeger(n,p) \
   ((n) >= (LUA_NUMBER)(LUA_MININTEGER) && \
    (n) < -(LUA_NUMBER)(LUA_MININTEGER) && \
       (*(p) = (LUA_INTEGER)(n), 1))
+#endif
 
 
 /* now the variable definitions */
@@ -497,6 +507,21 @@
 #define l_mathop(op)		op
 
 #define lua_str2number(s,p)	strtod((s), (p))
+
+#elif LUA_FLOAT_TYPE == LUA_FLOAT_INT /* }{ int */
+
+#define LUA_NUMBER	LUA_INTEGER
+
+//#define l_mathlim(n)		(L_##n)
+
+#define LUAI_UACNUMBER	LUAI_UACINT
+
+#define LUA_NUMBER_FRMLEN	""
+#define LUA_NUMBER_FMT		LUA_INTEGER_FMT
+
+#define l_mathop(op)		(LUA_INTEGER)(op)
+
+#define lua_str2number(s,p)	strtol((s), (p), 10)
 
 #else						/* }{ */
 
@@ -639,10 +664,12 @@
 ** all files that use these macros.)
 */
 #if defined(LUA_USE_C89) || (defined(HUGE_VAL) && !defined(HUGE_VALF))
+#if LUA_FLOAT_TYPE != LUA_FLOAT_INT
 #undef l_mathop  /* variants not available */
 #undef lua_str2number
 #define l_mathop(op)		(lua_Number)op  /* no variant */
 #define lua_str2number(s,p)	((lua_Number)strtod((s), (p)))
+#endif
 #endif
 
 

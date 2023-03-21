@@ -8,13 +8,12 @@
 static struct EventHandler {
   const char *pattern;
   int length;
-  void (WindowManager::*handler)(const char *);
+  void (WindowManager::*handler)(const char *evt);
 } handlers[] = {
   FOREACH_EVENT(DECL)
 };
 
 void WindowManager::handle_event(const char *evt) {
-  if (evt[0] == '#') return;
   for (auto &h: handlers) {
     if (strncmp(evt, h.pattern, h.length) == 0) {
       (this->*h.handler)(evt + h.length);
@@ -26,18 +25,6 @@ void WindowManager::handle_event(const char *evt) {
 // ---------- EVENT HANDLERS ----------
 
 void WindowManager::evt_timer(const char *evt) {
-  uint32_t now;
-  sscanf(evt, "%d", &now);
-  if (now > uptime) {
-    uptime = now;
-  }
-  for (Window *w: windows) {
-    if (w) {
-      assert(w->write_fd);
-      char buf[64]; sprintf(buf, "t %d\n", now);
-      write(w->write_fd, buf, strlen(buf));
-    }
-  }
   for (Window *w: windows) {
     if (w) w->update();
   }
@@ -45,6 +32,13 @@ void WindowManager::evt_timer(const char *evt) {
 }
 
 static int ctrl = 0, alt = 0, shift = 0;
+
+static void send_key_to_apps(Window *win, const char *key, int down) {
+  assert(win->write_fd);
+  char buf[64];
+  sprintf(buf, "k%c %s\n", (down ? 'd' : 'u'), key);
+  write(win->write_fd, buf, strlen(buf));
+}
 
 void WindowManager::evt_keydown(const char *evt) {
   char key[20];
@@ -60,21 +54,19 @@ void WindowManager::evt_keydown(const char *evt) {
   } else {
     if (display_appfinder) {
       if (strcmp(key, "LEFT") == 0) appfinder->prev();
-      if (strcmp(key, "TAB") == 0) appfinder->next();
-      if (strcmp(key, "RIGHT") == 0) appfinder->next();
-      if (strcmp(key, "RETURN") == 0) {
-        spawn(appfinder->getcmd());
+      else if (strcmp(key, "TAB") == 0) appfinder->next();
+      else if (strcmp(key, "RIGHT") == 0) appfinder->next();
+      else if (strcmp(key, "RETURN") == 0) {
+        spawn(appfinder->getcmd(), (const char **)appfinder->getargv()); // fall through
         display_appfinder = false;
         appfinder->draw();
       }
-      if (strcmp(key, "ESCAPE") == 0) {
+      else if (strcmp(key, "ESCAPE") == 0) {
         display_appfinder = false;
         appfinder->draw();
       }
     } else if (focus) {
-      assert(focus->write_fd);
-      char buf[64]; sprintf(buf, "kd %s\n", key);
-      write(focus->write_fd, buf, strlen(buf));
+      send_key_to_apps(focus, key, true);
     }
   }
 }
@@ -82,28 +74,17 @@ void WindowManager::evt_keydown(const char *evt) {
 void WindowManager::evt_keyup(const char *evt) {
   char key[20];
   sscanf(evt, "%s", key);
-
   if (strcmp(key, "LALT") == 0) {
     alt = 0;
-    if (display_switcher) {
-      switcher->draw();
-    }
+    if (display_switcher) switcher->draw();
     display_switcher = false;
     return;
   }
-  if (strcmp(key, "LCTRL") == 0) {
-    ctrl = 0;
-    return;
-  }
-  if (strcmp(key, "LSHIFT") == 0 || strcmp(key, "RSHIFT") == 0) {
-    shift ^= 1;
-    return;
-  }
+  if (strcmp(key, "LCTRL") == 0) { ctrl = 0; return; }
+  if (strcmp(key, "LSHIFT") == 0 || strcmp(key, "RSHIFT") == 0) { shift ^= 1; return; }
 
-  if (focus && !display_appfinder) {
-    assert(focus->write_fd);
-    char buf[64]; sprintf(buf, "ku %s\n", key);
-    write(focus->write_fd, buf, strlen(buf));
+  if (focus && !display_appfinder && !alt) {
+    send_key_to_apps(focus, key, false);
   }
 }
 
@@ -154,4 +135,3 @@ void WindowManager::evt_appfinder(const char *evt) {
     appfinder->draw();
   }
 }
-

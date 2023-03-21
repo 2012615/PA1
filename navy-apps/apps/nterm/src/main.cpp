@@ -1,131 +1,125 @@
-#include <stdio.h>
-#include <string.h>
-#include <font.h>
-#include <assert.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <nterm.h>
-#include <ndl.h>
+#include <SDL.h>
+#include <SDL_bdf.h>
 
-const char *nterm_proc = "/bin/dash";
-const char *font_fname = "/share/fonts/Courier-7.bdf";
+static const char *font_fname = "/share/fonts/Courier-7.bdf";
+static BDF_Font *font = NULL;
+static SDL_Surface *screen = NULL;
+Terminal *term = NULL;
 
-int columns = 48, lines = 16; // terminal geom
-int read_fd, write_fd, nterm_to_app[2], app_to_nterm[2]; // file desc
-Terminal *term;
+void builtin_sh_run();
+void extern_app_run(const char *app_path);
 
-static void draw_ch(Font *font, int x, int y, char ch, uint32_t fg, uint32_t bg);
-static void poll_terminal();
-static char handle_key(const char *buf);
-static void fork_child();
-
-int main() {
-  Font *font = new Font(font_fname);
+int main(int argc, char *argv[]) {
+  SDL_Init(0);
+  font = new BDF_Font(font_fname);
 
   // setup display
-  int win_w = font->w * columns;
-  int win_h = font->h * lines;
+  int win_w = font->w * W;
+  int win_h = font->h * H;
+  screen = SDL_SetVideoMode(win_w, win_h, 32, SDL_HWSURFACE);
 
-  NDL_OpenDisplay(win_w, win_h);
+  term = new Terminal(W, H);
 
-  term = new Terminal(columns, lines);
+  if (argc < 2) { builtin_sh_run(); }
+  else { extern_app_run(argv[1]); }
 
-  // fork the child process and setup fds
-  fork_child();
-
-  int elapse = -1, ntick = 0, last_k = 0;
-
-  while (1) {
-    poll_terminal();
-    char buf[256], *p = buf, ch;
-    while ((ch = getc(stdin)) != -1) {
-      *p ++ = ch;
-      if (ch == '\n') break;
-    }
-    *p = '\0';
-
-    if (buf[0] == 'k') {
-      last_k = elapse;
-      const char *res = term->keypress(handle_key(buf + 1));
-      if (res) {
-        write(write_fd, res, strlen(res));
-      }
-    }
-
-    if (buf[0] == 't') {
-      int now;
-      sscanf(buf + 2, "%d", &now);
-      for (int i = 0; i < columns; i ++)
-        for (int j = 0; j < lines; j ++)
-          if (term->is_dirty(i, j)) {
-            draw_ch(font, i * font->w, j * font->h, term->getch(i, j), term->foreground(i, j), term->background(i, j));
-          }
-      term->clear();
-
-      if (now - last_k < 1000 || (now - last_k) % 1000 <= 500) {
-        draw_ch(font, term->cursor.x * font->w, term->cursor.y * font->h, ' ', 0x0, 0x0);
-      }
-
-      NDL_Render();
-      elapse = now;
-    }
-  }
-
+  // should not reach here
   assert(0);
 }
 
-static void draw_ch(Font *font, int x, int y, char ch, uint32_t fg, uint32_t bg) {
-  uint32_t *bm = font->font[ch];
-  if (!bm) return;
-  for (int j = 0; j < font->h; j ++) {
-    uint32_t pixels[font->w];
-    for (int i = 0; i < font->w; i ++) {
-      pixels[i] = ((bm && ((bm[j] >> i) & 1))) ? fg : bg;
+static void draw_ch(int x, int y, char ch, uint32_t fg, uint32_t bg) {
+  SDL_Surface *s = BDF_CreateSurface(font, ch, fg, bg);
+  SDL_Rect dstrect = { .x = x, .y = y };
+  SDL_BlitSurface(s, NULL, screen, &dstrect);
+  SDL_FreeSurface(s);
+}
+
+void refresh_terminal() {
+  int needsync = 0;
+  for (int i = 0; i < W; i ++)
+    for (int j = 0; j < H; j ++)
+      if (term->is_dirty(i, j)) {
+        draw_ch(i * font->w, j * font->h, term->getch(i, j), term->foreground(i, j), term->background(i, j));
+        needsync = 1;
+      }
+  term->clear();
+
+  static uint32_t last = 0;
+  static int flip = 0;
+  uint32_t now = SDL_GetTicks();
+  if (now - last > 500 || needsync) {
+    int x = term->cursor.x, y = term->cursor.y;
+    uint32_t color = (flip ? term->foreground(x, y) : term->background(x, y));
+    draw_ch(x * font->w, y * font->h, ' ', 0, color);
+    SDL_UpdateRect(screen, 0, 0, 0, 0);
+    if (now - last > 500) {
+      flip = !flip;
+      last = now;
     }
-    NDL_DrawRect(pixels, x, y + j, font->w, 1);
   }
 }
 
-static void poll_terminal() {
-  static char buf[4096];
-  int nread = read(read_fd, buf, sizeof(buf));
-  if (nread > 0) {
-    term->write(buf, nread);
-  }
-}
-
-static struct {
+#define ENTRY(KEYNAME, NOSHIFT, SHIFT) { SDLK_##KEYNAME, #KEYNAME, NOSHIFT, SHIFT }
+static const struct {
+  int keycode;
   const char *name;
   char noshift, shift;
 } SHIFT[] = {
-  {"ESCAPE",       '\033', '\033'},
-  {"SPACE",        ' ' , ' '},
-  {"RETURN",       '\n', '\n'},
-  {"BACKSPACE",    '\b', '\b'},
-  {"1",            '1',  '!'},
-  {"2",            '2',  '@'},
-  {"3",            '3',  '#'},
-  {"4",            '4',  '$'},
-  {"5",            '5',  '%'},
-  {"6",            '6',  '^'},
-  {"7",            '7',  '&'},
-  {"8",            '8',  '*'},
-  {"9",            '9',  '('},
-  {"0",            '0',  ')'},
-  {"GRAVE",        '`',  '~'},
-  {"MINUS",        '-',  '_'},
-  {"EQUALS",       '=',  '+'},
-  {"SEMICOLON",    ';',  ':'},
-  {"APOSTROPHE",   '\'', '"'},
-  {"LEFTBRACKET",  '[',  '{'},
-  {"RIGHTBRACKET", ']',  '}'},
-  {"BACKSLASH",    '\\', '|'},
-  {"COMMA",        ',',  '<'},
-  {"PERIOD",       '.',  '>'},
-  {"SLASH",        '/',  '?'},
+  ENTRY(ESCAPE,       '\033', '\033'),
+  ENTRY(SPACE,        ' ' , ' '),
+  ENTRY(RETURN,       '\n', '\n'),
+  ENTRY(BACKSPACE,    '\b', '\b'),
+  ENTRY(1,            '1',  '!'),
+  ENTRY(2,            '2',  '@'),
+  ENTRY(3,            '3',  '#'),
+  ENTRY(4,            '4',  '$'),
+  ENTRY(5,            '5',  '%'),
+  ENTRY(6,            '6',  '^'),
+  ENTRY(7,            '7',  '&'),
+  ENTRY(8,            '8',  '*'),
+  ENTRY(9,            '9',  '('),
+  ENTRY(0,            '0',  ')'),
+  ENTRY(GRAVE,        '`',  '~'),
+  ENTRY(MINUS,        '-',  '_'),
+  ENTRY(EQUALS,       '=',  '+'),
+  ENTRY(SEMICOLON,    ';',  ':'),
+  ENTRY(APOSTROPHE,   '\'', '"'),
+  ENTRY(LEFTBRACKET,  '[',  '{'),
+  ENTRY(RIGHTBRACKET, ']',  '}'),
+  ENTRY(BACKSLASH,    '\\', '|'),
+  ENTRY(COMMA,        ',',  '<'),
+  ENTRY(PERIOD,       '.',  '>'),
+  ENTRY(SLASH,        '/',  '?'),
+  ENTRY(A,            'a',  'A'),
+  ENTRY(B,            'b',  'B'),
+  ENTRY(C,            'c',  'C'),
+  ENTRY(D,            'd',  'D'),
+  ENTRY(E,            'e',  'E'),
+  ENTRY(F,            'f',  'F'),
+  ENTRY(G,            'g',  'G'),
+  ENTRY(H,            'h',  'H'),
+  ENTRY(I,            'i',  'I'),
+  ENTRY(J,            'j',  'J'),
+  ENTRY(K,            'k',  'K'),
+  ENTRY(L,            'l',  'L'),
+  ENTRY(M,            'm',  'M'),
+  ENTRY(N,            'n',  'N'),
+  ENTRY(O,            'o',  'O'),
+  ENTRY(P,            'p',  'P'),
+  ENTRY(Q,            'q',  'Q'),
+  ENTRY(R,            'r',  'R'),
+  ENTRY(S,            's',  'S'),
+  ENTRY(T,            't',  'T'),
+  ENTRY(U,            'u',  'U'),
+  ENTRY(V,            'v',  'V'),
+  ENTRY(W,            'w',  'W'),
+  ENTRY(X,            'x',  'X'),
+  ENTRY(Y,            'y',  'Y'),
+  ENTRY(Z,            'z',  'Z'),
 };
 
-static char handle_key(const char *buf) {
+char handle_key(const char *buf) {
   char key[32];
   static int shift = 0;
   sscanf(buf + 2, "%s", key);
@@ -147,40 +141,18 @@ static char handle_key(const char *buf) {
   return '\0';
 }
 
-static void fork_child() {
-  const char *argv[] = {
-    nterm_proc,
-    NULL,
-  };
-  char env_lines[32]; sprintf(env_lines, "LINES=%d", lines);
-  char env_columns[32]; sprintf(env_columns, "COLUMNS=%d", columns);
-  const char *envp[] = {
-    env_lines,
-    env_columns,
-    "TERM=ansi",
-    NULL
-  };
+char handle_key(SDL_Event *ev) {
+  static int shift = 0;
+  int key = ev->key.keysym.sym;
+  if (key == SDLK_LSHIFT || key == SDLK_RSHIFT) { shift ^= 1; return '\0'; }
 
-  assert(0 == pipe(nterm_to_app));
-  assert(0 == pipe(app_to_nterm));
-  read_fd = app_to_nterm[0];
-  write_fd = nterm_to_app[1];
-
-  int flags = fcntl(read_fd, F_GETFL, 0);
-  fcntl(read_fd, F_SETFL, flags | O_NONBLOCK);
-
-  int stdin_fd = dup(0), stdout_fd = dup(1), stderr_fd = dup(2);
-
-  dup2(nterm_to_app[0], 0);
-  dup2(app_to_nterm[1], 1);
-  dup2(app_to_nterm[1], 2);
-
-  pid_t p = vfork();
-  if (p == 0) {
-    execve(argv[0], (char**)argv, (char**)envp);
-    assert(0);
-  } else {
-    dup2(stdin_fd, 0); dup2(stdout_fd, 1); dup2(stderr_fd, 2);
-    close(stdin_fd); close(stdout_fd); close(stderr_fd);
+  if (ev->type == SDL_KEYDOWN) {
+    for (auto item: SHIFT) {
+      if (item.keycode == key) {
+        if (shift) return item.shift;
+        else return item.noshift;
+      }
+    }
   }
+  return '\0';
 }

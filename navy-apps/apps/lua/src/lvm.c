@@ -11,7 +11,7 @@
 
 #include <float.h>
 #include <limits.h>
-#include <math.h>
+#include <mymath.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +43,8 @@
 */
 #if !defined(l_intfitsf)
 
+#if LUA_FLOAT_TYPE != LUA_FLOAT_INT
+
 /* number of bits in the mantissa of a float */
 #define NBM		(l_mathlim(MANT_DIG))
 
@@ -63,6 +65,7 @@
 
 #endif
 
+#endif
 
 
 /*

@@ -1,7 +1,4 @@
 #include <nterm.h>
-#include <string.h>
-#include <stdlib.h>
-#include <assert.h>
 
 #define EMPTY ' '
 
@@ -151,6 +148,7 @@ Terminal::Terminal(int width, int height) {
   inp_len = 0;
   col_f = Color::BLACK;
   col_b = Color::WHITE;
+  input[0] = '\0';
 
   for (int x = 0; x < w; x ++) {
     for (int y = 0; y < h; y ++) {
@@ -299,6 +297,7 @@ const char *Terminal::keypress(char ch) {
     input[inp_len] = '\0';
     return ret;
   }
+  return nullptr;
 }
 
 char Terminal::getch(int x, int y) {
@@ -308,7 +307,7 @@ char Terminal::getch(int x, int y) {
 void Terminal::putch(int x, int y, char ch) {
   buf[x + y * w] = ch;
   color[x + y * w] = (col_f << 4) | col_b;
-  dirty[x + y * w] = ch;
+  dirty[x + y * w] = true;
 }
 
 uint32_t Terminal::foreground(int x, int y) {

@@ -1,5 +1,8 @@
 #include <nwm.h>
 #include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <NDL.h>
 
 const int tile_shift = 4;
 
@@ -8,8 +11,8 @@ WindowManager::WindowManager(int width, int height): w(width), h(height) {
   th = h / (1 << tile_shift) + 1;
   changed = new bool [tw * th];
   fb = new uint32_t[w * h];
-  font = new Font("/share/fonts/Courier-7.bdf");
-  title_font = new Font("/share/fonts/Courier-8.bdf");
+  font = new BDF_Font("/share/fonts/Courier-7.bdf");
+  title_font = new BDF_Font("/share/fonts/Courier-8.bdf");
   focus = nullptr;
   display_switcher = false;
   display_appfinder = true;
@@ -29,16 +32,24 @@ WindowManager::~WindowManager() {
   delete switcher;
 }
 
-Window *WindowManager::spawn(const char *path) {
+Window *WindowManager::spawn(const char *path, const char *argv[]) {
   static int wx = 0, wy = 0;
+  char navyhome[128];
+  snprintf(navyhome, sizeof(navyhome), "NAVY_HOME=%s", getenv("NAVY_HOME"));
+#ifdef __ISA_NATIVE__
+  char ld_preload[256];
+  snprintf(ld_preload, sizeof(ld_preload), "LD_PRELOAD=%s/libs/libos/build/native.so", getenv("NAVY_HOME"));
+#endif
+  const char *envp[] = {
+    "NWM_APP=1",
+#ifdef __ISA_NATIVE__
+    ld_preload,
+#endif
+    navyhome,
+    NULL,
+  };
   for (Window *&win: windows) {
     if (!win) {
-      const char *argv[] = {
-        path, NULL,
-      };
-      const char *envp[] = {
-        NULL,
-      };
       win = new Window(this, path, argv, envp);
       focus = win;
       win->move(wx, wy);
@@ -68,9 +79,6 @@ void WindowManager::render() {
     draw_window(appfinder);
   }
 
-
-  assert(fbdev);
-
   const int T = 1 << tile_shift;
   for (int y = 0; y < th; y ++) {
     for (int x = 0; x < tw; x ++)
@@ -84,14 +92,12 @@ void WindowManager::render() {
           if (x1 + T * n > w) {
             sz -= x1 + T * n - w;
           }
-          fseek(fbdev, (y1 * w + x1) * 4, SEEK_SET); // assumes nwm is full-screen
-          fwrite(&fb[y1 * w + x1], sz * sizeof(uint32_t), 1, fbdev);
+          NDL_DrawRect(&fb[y1 * w + x1], x1, y1, sz, 1);
         }
         x += n - 1;
       }
   }
-  fflush(fbdev);
-  for (int i = 0; i < tw * th; i ++) changed[i] = false;
+  memset(changed, false, tw * th);
 }
 
 void WindowManager::set_focus(Window *win) {
@@ -100,9 +106,9 @@ void WindowManager::set_focus(Window *win) {
   focus->draw();
 }
 
-void WindowManager::draw_px(int x, int y, uint32_t color) {
+void WindowManager::draw_px(int x, int y, uint32_t color, bool has_alpha) {
   if (x >= 0 && x < w && y >= 0 && y < h) {
-    if ((color >> 24) == 0) {
+    if (!(has_alpha && (color >> 24) != 0)) {
       fb[y * w + x] = color;
     }
   }
@@ -122,7 +128,7 @@ void WindowManager::draw_window(Window *win) {
           for (int j = 0; j < T; j ++) {
             int x1 = basex + i - win->x, y1 = basey + j - win->y;
             if (x1 >= 0 && x1 < win->w && y1 >= 0 && y1 < win->h) {
-              draw_px(basex + i, basey + j, win->canvas[y1 * win->w + x1]);
+              draw_px(basex + i, basey + j, win->canvas[y1 * win->w + x1], win->has_alpha);
             }
           }
       }
@@ -133,4 +139,3 @@ void WindowManager::mark_dirty(int x, int y) {
     changed[tw * (y >> tile_shift) + (x >> tile_shift)] = true;
   }
 }
-
