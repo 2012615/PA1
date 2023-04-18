@@ -3,12 +3,12 @@
 #include "monitor/watchpoint.h"
 #include "nemu.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
 void cpu_exec(uint64_t);
+
 /* We use the `readline' library to provide more flexibility to read from stdin. */
 char* rl_gets() {
   static char *line_read = NULL;
@@ -26,107 +26,48 @@ char* rl_gets() {
 
   return line_read;
 }
-static int cmd_help(char *args);
+
 static int cmd_c(char *args) {
   cpu_exec(-1);
   return 0;
 }
-
+//continue the processing
 static int cmd_q(char *args) {
   return -1;
 }
+//quit the debugger
+static int cmd_help(char *args);
 
-static int cmd_si(char *args) {
-	if(args==NULL) //si
-		cpu_exec(1);
-	else//si N
-	{
-		int value=atoi(strtok(NULL, " "));
-		cpu_exec(value);
-	}
-  return 0;
-}
-extern void print_wp();
-static int cmd_info(char *args){
-	if(strcmp(args,"r")==0) //info r
-	{
-	    for(int i=0;i<8;i++)
-	    {
-	       printf("%s\t",reg_name(i,4));
-	       printf("0x%x\n",reg_l(i));
-	    }
-	    for(int i=0;i<8;i++)
-	    {
-	       printf("%s\t",reg_name(i,2));
-	       printf("0x%x\n",reg_w(i));
-	    }
-	    for(int i=0;i<8;i++)
-	    {
-	       printf("%s\t",reg_name(i,1));
-	       printf("0x%x\n",reg_b(i));
-	    }		
-	}
+static int cmd_si(char *args);
 
-	else if(strcmp(args,"w")==0)//info w
-	{
-		print_wp();
-	}
+static int cmd_info(char *args);
 
-	return 0;
-}
+static int cmd_p(char *args);
 
-extern uint32_t expr(char *e, bool *success);
-static int cmd_p(char *args){
-	bool success;
-	uint32_t result = expr(args, &success);
-  printf("result=%d\n",result);
-	return success;
-}
-static int cmd_x(char *args){
-  char *len=strtok(args," ");
-  char *addr=strtok(NULL," ");
-  uint32_t length=0;
-  sscanf(len,"%u",&length);
+static int cmd_d(char*args);
 
-  bool success;
-  uint32_t address = expr(addr,&success);
+static int cmd_x(char*args);
 
-  for(int i=0;i<length;i++)
-  {
-    char copy_addr[20];   
-    memset(&copy_addr,0,20);
-    sprintf(copy_addr,"%x",address);
-    printf("%s\t",copy_addr);
-    printf("%x\n", vaddr_read(address,4)); 
-    address+=4;
-  }
-  return 0;	
-}
-static int cmd_w(char *args){
-  WP* wp = new_wp(args);
-  printf("successfully got new point %d\n",wp->NO);
-  return 0;  
-}
-extern void free_wp(char* args);
-static int cmd_d(char *args){
-  free_wp(args);
-  return 0;
-}
+static int cmd_w(char*args);
+
+
 static struct {
   char *name;
   char *description;
   int (*handler) (char *);
 } cmd_table [] = {
-  { "help", "Display informations about all supported commands", cmd_help },
+  { "help", "Display informations about all supported commands", cmd_help},
   { "c", "Continue the execution of the program", cmd_c },
   { "q", "Exit NEMU", cmd_q },
-  { "si", "Run 1 command of the program", cmd_si},
-  { "info", "Print Info SUBCMD", cmd_info},
-  { "p", "calculate the EXPR's value", cmd_p},
-  { "x", "scan the memory", cmd_x},
-  { "w", "set the watchpoint", cmd_w},
-  { "d", "delete the watchpoint", cmd_d},
+
   /* TODO: Add more commands */
+  
+  { "si", "args: [N]; to run N steps", cmd_si},
+  { "info", "args: r/w; print the info of registers or watchpoints", cmd_info},
+  { "x","[N] and [expr]; to scan the memory from expr to expr+N", cmd_x},
+  { "p", "args:expr; to calculate the value of expr", cmd_p},
+  { "d", "args:N; to delete the watchpoint whose NO is N", cmd_d},
+  { "w", "args:expr; to set up a new WatchPoint", cmd_w}
 };
 
 #define NR_CMD (sizeof(cmd_table) / sizeof(cmd_table[0]))
@@ -154,13 +95,170 @@ static int cmd_help(char *args) {
   return 0;
 }
 
+//not sure!!!!
+static int cmd_si(char* args) //use ssanf to read from the param (str,cond,str)
+{
+	uint64_t steps=0;
+	if(args==NULL)
+	{
+		steps=1;
+	}
+	else
+	{
+		int flag=sscanf(args,"%lu",&steps);  /*llu means a unsigned long integer(64 bits)*/
+		if(flag<=0)
+		{
+			printf("wrong param!\n");
+			return 0;
+		}
+	}
+	cpu_exec(steps);
+	return 0;
+}
+//not sure!!1
 
-//用户界面主循环
+static int cmd_p(char *args)
+{
+  bool success;
+  int result=expr(args,&success);
+  if(!success)
+  {
+    printf("Something Wrong in the expr!\n");
+  }
+  else
+  {
+    printf("Result: %d\n",result);
+  }
+  return 0;
+}
+
+static int cmd_x(char*args)
+{
+	int N;
+  int Nsize;  //size of n
+  for(int i=0;args[i]!=' ';i++)
+  {
+    Nsize++;
+  }
+	char*Expr=(char*)malloc(strlen(args+Nsize+1));//The length of the expr
+  int flag;
+  flag=sscanf(args,"%d %s",&N,Expr);
+  if(flag<=0)
+  {
+    printf("Incorrect param!\n");
+    assert(0);
+  }
+
+  bool success;
+  vaddr_t addr=expr(Expr,&success);
+  if(!success)
+  {
+    printf("Something wrong in expr.\n");
+    return 0;
+  }
+
+  printf("Memory from %d(0x%x)\n",addr,addr);
+  for(int i=0;i<N;i++)
+  {
+    //ATTENTION!!! THE OUTPUT FORM!!!
+    if(i%4==0)
+    {
+      printf("\n0x%x:  0x%02x",addr+i,vaddr_read(addr+i,1));
+    }
+    else
+    {
+      printf("  0x%02x",vaddr_read(addr+i,1));
+    }
+  }
+  printf("\n");
+	return 0;
+}
+
+static int cmd_info(char*args)
+{
+	if(args==NULL)
+	{
+		printf("no param!\n");
+		return 0;
+	}
+	char opt;
+
+	int flag=sscanf(args,"%c",&opt);
+	if(flag<=0)
+	{
+		printf("Error in scan!\n");
+	}
+    
+	if(opt=='r')
+	{
+		//according to reg.h, we can just print all the registers we have
+		for(int i=0;i<8;i++)
+		{
+			printf("%s 0x%x\n",regsl[i],reg_l(i));
+		}
+		//then need to print eip-->ATTENTION!!!
+		printf("eip 0x%x\n",cpu.eip);
+
+		for(int i=0;i<8;i++)
+		{
+			printf("%s 0x%x\n",regsw[i],reg_w(i));
+		}
+
+		for(int i=0;i<8;i++)
+		{
+			printf("%s 0x%X\n",regsb[i],reg_b(i));
+		}
+
+		//cr0 and cr3 should be printed-->ATTENTION
+		//cr0:to deal with the operation mode and status
+		//cr1:not use  cr2:the linear address that make the page error(or page fault)
+		//cr3:PDBR  the base address of the PD
+		/*printf("CR0 0x%x\n",cpu.CR0);
+		printf("CR3 0x%x\n",cpu.CR3);*/
+		return 0;
+	}
+
+	else if(opt=='w')
+	{
+		//todo:print the info of watchpoints
+    WPrint();
+	}
+
+	else
+	{
+		printf("Wrong param!\n");
+	}
+
+	return 0;	
+}
+
+
+static int cmd_w(char*args)
+{
+  new_wp(args);
+  return 0;
+}
+
+static int cmd_d(char*args)
+{
+  int No;
+  int flag=sscanf(args,"%d",&No);
+  if(flag<=0)
+  {
+    printf("Wrong param!\n");
+    return 0;
+  }
+
+  free_wp(No);
+  return 0;
+}
+
 void ui_mainloop(int is_batch_mode) {
   if (is_batch_mode) {
     cmd_c(NULL);
     return;
   }
+
   while (1) {
     char *str = rl_gets();
     char *str_end = str + strlen(str);

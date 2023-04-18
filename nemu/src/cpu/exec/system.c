@@ -4,13 +4,7 @@ void diff_test_skip_qemu();
 void diff_test_skip_nemu();
 
 make_EHelper(lidt) {
-  //TODO();
-  cpu.idtr.limit = vaddr_read(id_dest->addr, 2);
-
-  if (decoding.is_operand_size_16) 
-    cpu.idtr.base = vaddr_read(id_dest->addr + 2, 4) & 0x00ffffff;  
-  else 
-    cpu.idtr.base = vaddr_read(id_dest->addr + 2, 4); 
+  TODO();
   
   print_asm_template1(lidt);
 }
@@ -31,10 +25,9 @@ make_EHelper(mov_cr2r) {
 #endif
 }
 
-extern void raise_intr(uint8_t NO, vaddr_t ret_addr);
 make_EHelper(int) {
-  //TODO(); 中断指令
-  raise_intr(id_dest->val, decoding.seq_eip);
+  TODO();
+
   print_asm("int %s", id_dest->str);
 
 #ifdef DIFF_TEST
@@ -43,21 +36,40 @@ make_EHelper(int) {
 }
 
 make_EHelper(iret) {
-  //TODO();
-  rtl_pop(&decoding.jmp_eip);
-  rtl_pop(&cpu.cs);
-  rtl_pop(&cpu.eflags.eflags_init);
-  decoding.is_jmp = 1;
+  TODO();
+
   print_asm("iret");
 }
 
+/*
+uint32_t pio_read(ioaddr_t addr, int len) {
+  assert(len == 1 || len == 2 || len == 4);
+  assert(addr + len - 1 < PORT_IO_SPACE_MAX);
+  pio_callback(addr, len, false);		// prepare data to read, not to write
+  uint32_t data = *(uint32_t *)(pio_space + addr) & (~0u >> ((4 - len) << 3));
+  return data;
+}
+
+void pio_write(ioaddr_t addr, int len, uint32_t data) {
+  assert(len == 1 || len == 2 || len == 4);
+  assert(addr + len - 1 < PORT_IO_SPACE_MAX);
+  memcpy(pio_space + addr, &data, len);
+  pio_callback(addr, len, true);
+}
+*/
+
+
+
+
 uint32_t pio_read(ioaddr_t, int);
 void pio_write(ioaddr_t, int, uint32_t);
-
+//to input or output something?
+//I/O operation
 make_EHelper(in) {
   //TODO();
-  t0 = pio_read(id_src->val, id_src->width);
-  operand_write(id_dest, &t0);
+  //pio_read->param is the dest address and width of data
+  rtl_li(&t2,pio_read(id_src->val,id_dest->width));
+  operand_write(id_dest,&t2);
   print_asm_template2(in);
 
 #ifdef DIFF_TEST
@@ -67,8 +79,11 @@ make_EHelper(in) {
 
 make_EHelper(out) {
   //TODO();
-  pio_write(id_dest->val, id_src->width, id_src->val);
- // print_asm_template2(out);
+
+  pio_write(id_dest->val,id_src->width,id_src->val);
+
+
+  print_asm_template2(out);
 
 #ifdef DIFF_TEST
   diff_test_skip_qemu();

@@ -8,8 +8,6 @@ typedef void (*EHelper) (vaddr_t *);
 
 #include "cpu/decode.h"
 
-// 1、取值。得到指令，解释成opcode，记录到全局译码信息decoding中
-// 2、在exec.c 
 static inline uint32_t instr_fetch(vaddr_t *eip, int len) {
   uint32_t instr = vaddr_read(*eip, len);
 #ifdef DEBUG
