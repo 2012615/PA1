@@ -125,9 +125,20 @@ void init_qemu_reg() {
   bool ok = gdb_setregs(&r);
   assert(ok == 1);
 }
-
+/*
+union gdb_regs {
+  struct {
+    uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
+    uint32_t eip, eflags;
+    uint32_t cs, ss, ds, es, fs, gs;
+  };
+  struct {
+    uint32_t array[77];
+  };
+};
+*/
 void difftest_step(uint32_t eip) {
-  union gdb_regs r,mine;
+  union gdb_regs r;
   bool diff = false;
 
   if (is_skip_nemu) {
@@ -150,23 +161,51 @@ void difftest_step(uint32_t eip) {
   // TODO: Check the registers state with QEMU.
   // Set `diff` as `true` if they are not the same.
   //TODO();
-  regcpy_from_nemu(mine);
-  if(r.eax != mine.eax || r.ecx != mine.ecx || r.edx != mine.edx ||
-     r.ebx != mine.ebx || r.esp != mine.esp || r.ebp != mine.ebp ||
-     r.esi != mine.esi || r.edi != mine.edi || r.eip != mine.eip) {
-    diff = true;
-    printf("qemus eax=0x%08x, mine eax=0x%08x, eip:0x%08x\n", r.eax, mine.eax, mine.eip);
-    printf("qemus ecx=0x%08x, mine ecx=0x%08x, eip:0x%08x\n", r.ecx, mine.ecx, mine.eip);
-    printf("qemus edx=0x%08x, mine edx=0x%08x, eip:0x%08x\n", r.edx, mine.edx, mine.eip);
-    printf("qemus ebx=0x%08x, mine ebx=0x%08x, eip:0x%08x\n", r.ebx, mine.ebx, mine.eip);
-    printf("qemus esp=0x%08x, mine esp=0x%08x, eip:0x%08x\n", r.esp, mine.esp, mine.eip);
-    printf("qemus ebp=0x%08x, mine ebp=0x%08x, eip:0x%08x\n", r.ebp, mine.ebp, mine.eip);
-    printf("qemus esi=0x%08x, mine esi=0x%08x, eip:0x%08x\n", r.esi, mine.esi, mine.eip);
-    printf("qemus edi=0x%08x, mine edi=0x%08x, eip:0x%08x\n", r.edi, mine.edi, mine.eip);
-    printf("qemus eip=0x%08x, mine eip=0x%08x, eip:0x%08x\n", r.eip, mine.eip, mine.eip);
-  } 
+
+  if(r.eax!=cpu.eax)
+  {
+    diff=true;
+  }
+  if(r.ecx!=cpu.ecx)
+  {
+    diff=true;
+  }
+  if(r.edx!=cpu.edx)
+  {
+    diff=true;
+  }
+  if(r.ebx!=cpu.ebx)
+  {
+    diff=true;
+  }
+  if(r.esp!=cpu.esp)
+  {
+    diff=true;
+  }
+  if(r.ebp!=cpu.ebp)
+  {
+    diff=true;
+  }
+  if(r.esi!=cpu.esi)
+  {
+    diff=true;
+  }
+  if(r.eip!=cpu.eip)
+  {
+    diff=true;
+  }
+
 
   if (diff) {
+    Log("qemu.eax=0x%x, nemu.eax=0x%x", r.eax, cpu.eax);
+    Log("qemu.ecx=0x%x, nemu.ecx=0x%x", r.ecx, cpu.ecx);
+    Log("qemu.edx=0x%x, nemu.edx=0x%x", r.edx, cpu.edx);
+    Log("qemu.ebx=0x%x, nemu.ebx=0x%x", r.ebx, cpu.ebx);
+    Log("qemu.esp=0x%x, nemu.esp=0x%x", r.esp, cpu.esp);
+    Log("qemu.ebp=0x%x, nemu.ebp=0x%x", r.ebp, cpu.ebp);
+    Log("qemu.esi=0x%x, nemu.esi=0x%x", r.esi, cpu.esi);
+    Log("qemu.edi=0x%x, nemu.edi=0x%x", r.edi, cpu.edi);
+    Log("EIP at: qemu.eip=0x%x, nemu.eip=0x%x", r.eip, cpu.eip);
     nemu_state = NEMU_END;
   }
 }

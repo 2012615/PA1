@@ -22,7 +22,6 @@ typedef struct {
   char str[OP_STR_SIZE];
 } Operand;
 
-// 记录全局译码信息
 typedef struct {
   uint32_t opcode;
   vaddr_t seq_eip;  // sequential eip
@@ -30,7 +29,7 @@ typedef struct {
   uint8_t ext_opcode;
   bool is_jmp;
   vaddr_t jmp_eip;
-  Operand src, dest, src2; //源操作数1+目的操作数+源操作数2
+  Operand src, dest, src2;
 #ifdef DEBUG
   char assembly[80];
   char asm_buf[128];
@@ -68,9 +67,9 @@ void operand_write(Operand *, rtlreg_t *);
 /* shared by all helper functions */
 extern DecodeInfo decoding;
 
-#define id_src  (&decoding.src)  // 源操作数1
-#define id_src2 (&decoding.src2) // 源操作数2
-#define id_dest (&decoding.dest) // 目的操作数
+#define id_src (&decoding.src)
+#define id_src2 (&decoding.src2)
+#define id_dest (&decoding.dest)
 
 #define make_DHelper(name) void concat(decode_, name) (vaddr_t *eip)
 typedef void (*DHelper) (vaddr_t *);
@@ -112,5 +111,6 @@ make_DHelper(in_I2a);
 make_DHelper(in_dx2a);
 make_DHelper(out_a2I);
 make_DHelper(out_a2dx);
+
 
 #endif

@@ -3,7 +3,7 @@
 
 #include "common.h"
 
-enum { R_EAX, R_ECX, R_EDX, R_EBX, R_ESP, R_EBP, R_ESI, R_EDI }; //32位 8个
+enum { R_EAX, R_ECX, R_EDX, R_EBX, R_ESP, R_EBP, R_ESI, R_EDI };
 enum { R_AX, R_CX, R_DX, R_BX, R_SP, R_BP, R_SI, R_DI };
 enum { R_AL, R_CL, R_DL, R_BL, R_AH, R_CH, R_DH, R_BH };
 
@@ -15,46 +15,51 @@ enum { R_AL, R_CL, R_DL, R_BL, R_AH, R_CH, R_DH, R_BH };
  */
 
 typedef struct {
-  /* Do NOT change the order of the GPRs' definitions. */
-  /* In NEMU, rtlreg_t is exactly uint32_t. This makes RTL instructions
-   * in PA2 able to directly access these registers.
-   */
-  union{
+  union
+  {
     union{
-      uint32_t _32;
-      uint16_t _16;
-      uint8_t _8[2];
+    uint32_t _32;
+    uint16_t _16;
+    uint8_t _8[2];
     } gpr[8];
-    struct{
+    struct
+    {
       rtlreg_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
     };
   };
-  vaddr_t eip;
-  
-  unsigned int cs;
 
-  union
-  {
-      rtlreg_t eflags_init;
-      struct
-      {
-          unsigned int CF:1;
-          unsigned int ZF:1;
-          unsigned int SF:1;
-          unsigned int IF:1;
-          unsigned int OF:1;
-      };
+  /* Do NOT change the order of the GPRs' definitions. */
+
+  /* In NEMU, rtlreg_t is exactly uint32_t. This makes RTL instructions
+   * in PA2 able to directly access these registers.
+   */
+  
+
+  vaddr_t eip;
+
+  struct ef{
+    unsigned int CF:1;   //carry flag, when there is a carry/borrow bits in add/sub operation, it will be set as 1
+    unsigned int x:1;
+    unsigned int:4;
+
+    unsigned int ZF:1;   //Zero Flag -- Set if result is zero; cleared otherwise.
+    unsigned int SF:1;   //Set equal to high-order bit of result (0 is positive, 1 if negative).
+    unsigned int:1;
+
+    unsigned int IF:1;
+    unsigned int:1;
+
+    unsigned int OF:1;    //Overflow Flag -- Set if result is too large a positive number
+            //or too small a negative number (excluding sign-bit) to fit in
+            //destination operand; cleared otherwise.
+    unsigned int:20;
   }eflags;
 
-  struct{
-    uint16_t limit;
-    uint32_t base;
-  }idtr;
-  
+
+  //origin value of eflags:  EFLAGS             =00000002H
 } CPU_state;
 
 extern CPU_state cpu;
-
 
 static inline int check_reg_index(int index) {
   assert(index >= 0 && index < 8);
@@ -63,7 +68,7 @@ static inline int check_reg_index(int index) {
 
 #define reg_l(index) (cpu.gpr[check_reg_index(index)]._32)
 #define reg_w(index) (cpu.gpr[check_reg_index(index)]._16)
-#define reg_b(index) (cpu.gpr[check_reg_index(index) & 0x3]._8[index >> 2])
+#define reg_b(index) (cpu.gpr[check_reg_index(index) & 0x3]._8[index >> 2])//why &0x3?
 
 extern const char* regsl[];
 extern const char* regsw[];
@@ -71,7 +76,7 @@ extern const char* regsb[];
 
 static inline const char* reg_name(int index, int width) {
   assert(index >= 0 && index < 8);
-  switch (width) {
+  switch (width) {//chose different registers according to the length.
     case 4: return regsl[index];
     case 1: return regsb[index];
     case 2: return regsw[index];

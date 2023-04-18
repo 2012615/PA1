@@ -1,7 +1,7 @@
 #include "common.h"
 
 /* Uncomment these macros to enable corresponding functionality. */
-#define HAS_ASYE
+//#define HAS_ASYE
 //#define HAS_PTE
 
 void init_mm(void);
@@ -27,18 +27,11 @@ int main() {
   Log("Initializing interrupt/exception handler...");
   init_irq();
 #endif
+
   init_fs();
 
-  //uint32_t entry = loader(NULL, NULL);
-  uint32_t entry = loader(NULL, "/bin/hello");
-  //uint32_t entry = loader(NULL, "/bin/text");
-  //uint32_t entry = loader(NULL, "/bin/bmptest");
-  //uint32_t entry = loader(NULL, "/bin/events");
-  //uint32_t entry = loader(NULL, "/bin/pal");
-  printf("loader end\n");
+  uint32_t entry = loader(NULL, NULL);
   ((void (*)(void))entry)();
 
   panic("Should not reach here");
 }
-
-  

@@ -18,6 +18,7 @@ void bubble_sort() {
 }
 
 int main() {
+
 	bubble_sort();
 
 	int i;
