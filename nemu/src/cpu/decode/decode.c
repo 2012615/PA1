@@ -6,6 +6,7 @@ DecodeInfo decoding;
 rtlreg_t t0, t1, t2, t3;
 const rtlreg_t tzero = 0;
 
+// 译码函数
 #define make_DopHelper(name) void concat(decode_op_, name) (vaddr_t *eip, Operand *op, bool load_val)
 
 /* Refer to Appendix A in i386 manual for the explanations of these abbreviations */
@@ -35,12 +36,22 @@ static inline make_DopHelper(SI) {
   /* TODO: Use instr_fetch() to read `op->width' bytes of memory
    * pointed by `eip'. Interpret the result as a signed immediate,
    * and assign it to op->simm.
-   *
-   op->simm = ???
-   */
-  TODO();
+   **/
+   //op->simm = instr_fetch(eip, op->width);
 
+  //TODO();
+
+  if (op->width == 4) {
+    op->simm = instr_fetch(eip, op->width);
+  }
+  else if (op->width == 2) {
+    op->simm = (int16_t)((uint16_t)instr_fetch(eip, op->width));
+  }
+  else {
+    op->simm = (int16_t)(int8_t)((uint8_t)instr_fetch(eip, op->width));
+  }
   rtl_li(&op->val, op->simm);
+
 
 #ifdef DEBUG
   snprintf(op->str, OP_STR_SIZE, "$0x%x", op->simm);
@@ -199,8 +210,10 @@ make_DHelper(test_I) {
 make_DHelper(SI2E) {
   assert(id_dest->width == 2 || id_dest->width == 4);
   decode_op_rm(eip, id_dest, true, NULL, false);
-  id_src->width = 1;
+  id_src->width = 1; //source1
+
   decode_op_SI(eip, id_src, true);
+
   if (id_dest->width == 2) {
     id_src->val &= 0xffff;
   }
@@ -304,6 +317,7 @@ make_DHelper(out_a2dx) {
 #endif
 }
 
+// 写操作
 void operand_write(Operand *op, rtlreg_t* src) {
   if (op->type == OP_TYPE_REG) { rtl_sr(op->reg, op->width, src); }
   else if (op->type == OP_TYPE_MEM) { rtl_sm(&op->addr, op->width, src); }
