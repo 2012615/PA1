@@ -5,11 +5,6 @@ make_EHelper(nop) {
   print_asm("nop");
 }
 
-make_EHelper(endbr32)
-{
-  print_asm("endbr32");
-}
-
 make_EHelper(inv) {
   /* invalid opcode */
 

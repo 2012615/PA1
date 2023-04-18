@@ -12,7 +12,7 @@ make_EHelper(jcc) {
   uint8_t subcode = decoding.opcode & 0xf;
   rtl_setcc(&t2, subcode);
   decoding.is_jmp = t2;
-  
+
   print_asm("j%s %x", get_cc_name(subcode), decoding.jmp_eip);
 }
 
@@ -25,26 +25,19 @@ make_EHelper(jmp_rm) {
 
 make_EHelper(call) {
   // the target address is calculated at the decode stage
-  rtl_li(&t2, decoding.seq_eip);
-  rtl_push(&t2);
-  decoding.is_jmp = 1;
+  TODO();
 
   print_asm("call %x", decoding.jmp_eip);
 }
 
 make_EHelper(ret) {
-  rtl_pop(&t2);
-  decoding.jmp_eip = t2;
-  decoding.is_jmp = 1;
+  TODO();
 
   print_asm("ret");
 }
 
 make_EHelper(call_rm) {
-  rtl_li(&t2, decoding.seq_eip);
-  rtl_push(&t2);
-  decoding.jmp_eip = id_dest->val;
-  decoding.is_jmp = 1;
+  TODO();
 
   print_asm("call *%s", id_dest->str);
 }
