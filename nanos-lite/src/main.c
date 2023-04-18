@@ -2,7 +2,7 @@
 
 /* Uncomment these macros to enable corresponding functionality. */
 #define HAS_ASYE
-#define HAS_PTE
+//#define HAS_PTE
 
 void init_mm(void);
 void init_ramdisk(void);
@@ -27,17 +27,18 @@ int main() {
   Log("Initializing interrupt/exception handler...");
   init_irq();
 #endif
-
   init_fs();
 
-  /*uint32_t entry = loader(NULL, "/bin/pal");
-  ((void (*)(void))entry)();*/
-  extern void load_prog(const char* filename);
-  load_prog("/bin/pal");
-  load_prog("/bin/hello");
-  load_prog("/bin/videotest");
-
-  _trap();
+  //uint32_t entry = loader(NULL, NULL);
+  uint32_t entry = loader(NULL, "/bin/hello");
+  //uint32_t entry = loader(NULL, "/bin/text");
+  //uint32_t entry = loader(NULL, "/bin/bmptest");
+  //uint32_t entry = loader(NULL, "/bin/events");
+  //uint32_t entry = loader(NULL, "/bin/pal");
+  printf("loader end\n");
+  ((void (*)(void))entry)();
 
   panic("Should not reach here");
 }
+
+  
