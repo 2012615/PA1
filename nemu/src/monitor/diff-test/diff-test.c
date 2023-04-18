@@ -127,7 +127,7 @@ void init_qemu_reg() {
 }
 
 void difftest_step(uint32_t eip) {
-  union gdb_regs r;
+  union gdb_regs r,mine;
   bool diff = false;
 
   if (is_skip_nemu) {
@@ -149,7 +149,22 @@ void difftest_step(uint32_t eip) {
 
   // TODO: Check the registers state with QEMU.
   // Set `diff` as `true` if they are not the same.
-  TODO();
+  //TODO();
+  regcpy_from_nemu(mine);
+  if(r.eax != mine.eax || r.ecx != mine.ecx || r.edx != mine.edx ||
+     r.ebx != mine.ebx || r.esp != mine.esp || r.ebp != mine.ebp ||
+     r.esi != mine.esi || r.edi != mine.edi || r.eip != mine.eip) {
+    diff = true;
+    printf("qemus eax=0x%08x, mine eax=0x%08x, eip:0x%08x\n", r.eax, mine.eax, mine.eip);
+    printf("qemus ecx=0x%08x, mine ecx=0x%08x, eip:0x%08x\n", r.ecx, mine.ecx, mine.eip);
+    printf("qemus edx=0x%08x, mine edx=0x%08x, eip:0x%08x\n", r.edx, mine.edx, mine.eip);
+    printf("qemus ebx=0x%08x, mine ebx=0x%08x, eip:0x%08x\n", r.ebx, mine.ebx, mine.eip);
+    printf("qemus esp=0x%08x, mine esp=0x%08x, eip:0x%08x\n", r.esp, mine.esp, mine.eip);
+    printf("qemus ebp=0x%08x, mine ebp=0x%08x, eip:0x%08x\n", r.ebp, mine.ebp, mine.eip);
+    printf("qemus esi=0x%08x, mine esi=0x%08x, eip:0x%08x\n", r.esi, mine.esi, mine.eip);
+    printf("qemus edi=0x%08x, mine edi=0x%08x, eip:0x%08x\n", r.edi, mine.edi, mine.eip);
+    printf("qemus eip=0x%08x, mine eip=0x%08x, eip:0x%08x\n", r.eip, mine.eip, mine.eip);
+  } 
 
   if (diff) {
     nemu_state = NEMU_END;

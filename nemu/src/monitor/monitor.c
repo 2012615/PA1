@@ -1,5 +1,7 @@
 #include "nemu.h"
 #include <unistd.h>
+#include <stdlib.h>
+#include <memory.h>
 
 #define ENTRY_START 0x100000
 
@@ -82,7 +84,9 @@ static inline void load_img() {
 static inline void restart() {
   /* Set the initial instruction pointer. */
   cpu.eip = ENTRY_START;
-
+  cpu.cs = 0x8;
+  cpu.eflags.eflags_init = 0x2;
+  
 #ifdef DIFF_TEST
   init_qemu_reg();
 #endif
@@ -113,7 +117,7 @@ int init_monitor(int argc, char *argv[]) {
   /* Open the log file. */
   init_log();
 
-  /* Test the implementation of the `CPU_state' structure. */
+  /* 对reg的正确性进行测试 */
   reg_test();
 
 #ifdef DIFF_TEST
@@ -121,7 +125,7 @@ int init_monitor(int argc, char *argv[]) {
   init_difftest();
 #endif
 
-  /* Load the image to memory. */
+  /* 读入带有用户程序的镜像文件 */
   load_img();
 
   /* Initialize this virtual computer system. */
